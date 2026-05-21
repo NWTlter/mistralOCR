@@ -1,0 +1,231 @@
+---
+title: "Getting Started with mistralOCR"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting Started with mistralOCR}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+`mistralOCR` uses the [Mistral AI](https://mistral.ai) OCR API to extract tables
+from PDF documents and return them as R tibbles, with optional per-cell
+confidence scores.
+
+## 1. Create an account and get an API key
+
+1. Go to <https://admin.mistral.ai/organization> and create a Mistral account.
+2. Once logged in, navigate to **API Keys** and click **Create new key**.
+3. Copy the key immediately — it will not be shown again.
+4. Keep the key secret. Never commit it to a Git repository or share it in code.
+
+## 2. Set your API key in R
+
+The package reads the key from the `MISTRAL_API_KEY` environment variable.
+There are two recommended ways to set it.
+
+### Option A — Current session only
+
+```{r}
+Sys.setenv(MISTRAL_API_KEY = "your-api-key-here")
+```
+
+This works for the current R session and is the simplest approach for
+interactive use.
+
+### Option B — Persist across sessions using `.Renviron`
+
+To avoid having to set the key every time you start R, add it to your user
+`.Renviron` file. The `usethis` package makes this easy:
+
+```{r}
+usethis::edit_r_environ()
+```
+
+This opens `~/.Renviron` in your editor. Add the following line, then save
+and restart R:
+
+```
+MISTRAL_API_KEY=your-api-key-here
+```
+
+You can verify it is set correctly after restarting:
+
+```{r}
+Sys.getenv("MISTRAL_API_KEY")  # should print your key, not ""
+```
+
+## 3. Install the package
+
+```{r}
+# Install from a local clone
+devtools::install("path/to/mistralOCR")
+
+# Or, if published to GitHub:
+# remotes::install_github("yourorg/mistralOCR")
+```
+
+## 4. Extract tables from a PDF
+
+```{r}
+library(mistralOCR)
+
+res <- mistral_ocr_pdf("path/to/your/document.pdf")
+```
+
+The returned object is a named list:
+
+| Element | Contents |
+|---|---|
+| `res$pages` | Page-level metadata tibble |
+| `res$table_titles` | Tibble of extracted table titles |
+| `res$table_dfs` | List of extracted tables (one tibble per table) |
+| `res$table_dfs_by_page` | Same tables, grouped by page |
+| `res$model` | Model name used |
+| `res$usage_info` | Token usage from the API |
+| `res$raw` | Full raw API response |
+
+```{r}
+# How many pages and tables were found?
+res$pages
+res$table_titles
+
+# Inspect the first extracted table
+res$table_dfs[[1]]
+```
+
+## 5. Process specific pages
+
+```{r}
+# Only process pages 4 through 6
+res <- mistral_ocr_pdf(
+  "path/to/document.pdf",
+  pages = 4:6
+)
+```
+
+## 6. `prompt_json` examples for specific instructions
+
+Use `prompt_json` when you want to tell OCR what table structure to expect.
+You can pass either an R list (recommended) or a JSON string.
+
+### Example A — R list with two allowed column patterns
+
+```{r}
+prompt_spec <- list(
+  expected_tables = list(
+    list(columns = list(NULL, "5", "15", "25", "35", "45", NULL)),
+    list(columns = list(NULL, "55", "65", "75", "85", "95", NULL))
+  ),
+  guidance = paste(
+    "Column headers should match one of the two allowed patterns.",
+    "First and last columns are row labels."
+  )
+)
+
+res <- mistral_ocr_pdf(
+  "path/to/document.pdf",
+  prompt_json = prompt_spec
+)
+```
+
+### Example B — JSON string
+
+```{r}
+prompt_json_text <- '{
+  "expected_tables": [
+    {
+      "columns": [null, "YEAR", "YIELD LB/AC", "OIL %", null]
+    }
+  ],
+  "guidance": "Treat the first and last columns as row labels; preserve numeric values exactly."
+}'
+
+res <- mistral_ocr_pdf(
+  "path/to/document.pdf",
+  prompt_json = prompt_json_text
+)
+```
+
+### Example C — Instructions focused on data normalization
+
+```{r}
+prompt_spec <- list(
+  expected_tables = list(
+    list(columns = list("COMPANY", "HYBRID", "YIELD LB/AC", "OIL %", "DAY TO MAT"))
+  ),
+  guidance = paste(
+    "Normalize OCR variants: O = 0 in numeric fields.",
+    "Do not merge adjacent columns.",
+    "Keep missing values as null."
+  )
+)
+
+res <- mistral_ocr_pdf(
+  "path/to/document.pdf",
+  prompt_json = prompt_spec
+)
+```
+
+## 7. Confidence scores
+
+By default the package requests per-word confidence from the API and maps those
+scores back to individual table cells. Each value column in the extracted tables
+has a corresponding `<column>.confidence` column containing the mean OCR
+confidence for that cell (0–1).
+
+```{r}
+res <- mistral_ocr_pdf(
+  "path/to/document.pdf",
+  confidence_scores_granularity = "word",
+  pagewise_confidence_fallback = TRUE   # retry page-by-page if multi-page
+                                         # request returns no confidence
+)
+
+# Confidence columns appear alongside value columns
+names(res$table_dfs[[1]])
+```
+
+Set `confidence_scores_granularity = "none"` to skip confidence entirely and
+speed up requests.
+
+## 8. Launch the interactive Shiny app
+
+For a point-and-click interface with file browsing, table preview, and
+one-click download:
+
+```{r}
+app <- launch_mistral_ocr_app()
+shiny::runApp(app)
+```
+
+The app reads `MISTRAL_API_KEY` from the environment automatically, though you
+can also paste a key directly into the password field.
+
+## 9. Save all extracted tables at once
+
+From R (not the app):
+
+```{r}
+# Write table_titles.csv + one CSV per table to a timestamped subfolder
+out_dir <- file.path("~/mistral_exports",
+                     paste0("run_", format(Sys.time(), "%Y%m%d_%H%M%S")))
+dir.create(out_dir, recursive = TRUE)
+
+utils::write.csv(res$table_titles,
+                 file.path(out_dir, "table_titles.csv"),
+                 row.names = FALSE, na = "")
+
+purrr::iwalk(res$table_dfs, \(tbl, idx) {
+  utils::write.csv(tbl,
+                   file.path(out_dir, paste0("table_", idx, ".csv")),
+                   row.names = FALSE, na = "")
+})
+```
