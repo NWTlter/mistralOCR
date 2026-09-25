@@ -15,13 +15,17 @@ It parses markdown tables into tibbles and can attach confidence information to 
 
 ```r
 # install.packages("pak")
+options(pkg.build_vignettes = TRUE)
 pak::pak("NWTlter/mistralOCR")
 ```
-
+Or
+```
+remotes::install_github("NWTlter/mistralOCR", build_vignettes = TRUE)
+```
 Or install from a local clone:
 
 ```r
-devtools::install(".")
+devtools::install(".", build_vignettes = TRUE)
 ```
 
 ## Authentication
