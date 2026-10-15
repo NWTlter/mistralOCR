@@ -69,4 +69,4 @@ shiny::runApp(app)
 
 ## Notes
 
-This package and outputs should be reviewed carefully before production use.
+This package and outputs should be reviewed carefully before production use. Claude code was used extensively in creating this package.
